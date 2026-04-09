@@ -80,21 +80,97 @@ class TodayVerseResponse(BaseModel):
 
 # ==================== BIBLE API ====================
 
+# Afrikaans to English book name mapping
+AFRIKAANS_BOOKS = {
+    # Old Testament
+    "gen": "genesis", "eks": "exodus", "exodus": "exodus", "lev": "leviticus", 
+    "num": "numbers", "deut": "deuteronomy", "jos": "joshua", "rig": "judges", 
+    "rut": "ruth", "1 sam": "1 samuel", "2 sam": "2 samuel", 
+    "1 kon": "1 kings", "2 kon": "2 kings", "1 kron": "1 chronicles", 
+    "2 kron": "2 chronicles", "2 chro": "2 chronicles", "1 chro": "1 chronicles",
+    "esra": "ezra", "neh": "nehemiah", "est": "esther", "job": "job", 
+    "ps": "psalms", "psalm": "psalms", "psalms": "psalms",
+    "spr": "proverbs", "prov": "proverbs", "proverbs": "proverbs",
+    "pred": "ecclesiastes", "hgl": "song of solomon",
+    "jes": "isaiah", "isaiah": "isaiah", "jer": "jeremiah", "jeremiah": "jeremiah",
+    "klaagl": "lamentations", "eseg": "ezekiel", "dan": "daniel", 
+    "hos": "hosea", "joel": "joel", "amos": "amos", "ob": "obadiah", 
+    "jona": "jonah", "mig": "micah", "nah": "nahum", "hab": "habakkuk", 
+    "habakkuk": "habakkuk", "sef": "zephaniah", "hag": "haggai", 
+    "sag": "zechariah", "mal": "malachi",
+    # New Testament
+    "matt": "matthew", "matthew": "matthew", "mark": "mark", 
+    "luk": "luke", "luke": "luke", "joh": "john", "john": "john",
+    "hand": "acts", "rom": "romans", "romans": "romans",
+    "1 kor": "1 corinthians", "2 kor": "2 corinthians", 
+    "1 cor": "1 corinthians", "2 cor": "2 corinthians",
+    "gal": "galatians", "galatians": "galatians",
+    "efe": "ephesians", "ephesians": "ephesians", "eph": "ephesians",
+    "fil": "philippians", "phil": "philippians", "philippians": "philippians",
+    "kol": "colossians", "col": "colossians", "colossians": "colossians",
+    "1 tes": "1 thessalonians", "2 tes": "2 thessalonians",
+    "1 tim": "1 timothy", "2 tim": "2 timothy", "timothy": "timothy",
+    "tit": "titus", "filem": "philemon", "heb": "hebrews", "hebrews": "hebrews",
+    "jak": "james", "james": "james",
+    "1 pet": "1 peter", "2 pet": "2 peter", "1 peter": "1 peter", "2 peter": "2 peter",
+    "1 joh": "1 john", "2 joh": "2 john", "3 joh": "3 john",
+    "1 john": "1 john", "2 john": "2 john", "3 john": "3 john",
+    "jud": "jude", "op": "revelation",
+}
+
+def convert_reference_to_english(reference: str) -> str:
+    """Convert Afrikaans/abbreviated book names to English for Bible API"""
+    import re
+    
+    ref = reference.strip()
+    
+    # Handle "Fil4:19" format (no space between book and chapter)
+    match = re.match(r'^(\d?\s?[a-zA-Z]+)(\d+:\d+(?:-\d+)?)$', ref)
+    if match:
+        book_part = match.group(1).strip().lower()
+        verse_part = match.group(2)
+        
+        for afr, eng in sorted(AFRIKAANS_BOOKS.items(), key=lambda x: -len(x[0])):
+            if book_part == afr:
+                return f"{eng} {verse_part}"
+        return f"{book_part} {verse_part}"
+    
+    # Handle normal format "Book Chapter:Verse"
+    match = re.match(r'^(\d?\s?[a-zA-Z]+)\s+(\d+:\d+(?:-\d+)?)$', ref)
+    if match:
+        book_part = match.group(1).strip().lower()
+        verse_part = match.group(2)
+        
+        for afr, eng in sorted(AFRIKAANS_BOOKS.items(), key=lambda x: -len(x[0])):
+            if book_part == afr:
+                return f"{eng} {verse_part}"
+        return f"{book_part} {verse_part}"
+    
+    return ref
+
 async def fetch_verse_from_api(reference: str) -> str:
     """Fetch verse text from bible-api.com"""
+    # Convert Afrikaans reference to English
+    english_ref = convert_reference_to_english(reference)
+    
     # Convert reference format: "Numbers 6:24-26" -> "numbers+6:24-26"
-    formatted_ref = reference.lower().replace(" ", "+").replace(":", ":")
+    formatted_ref = english_ref.lower().replace(" ", "+")
     
     url = f"https://bible-api.com/{formatted_ref}"
+    logger.info(f"Fetching: {url} (original: {reference})")
     
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, timeout=10.0)
+            response = await client.get(url, timeout=15.0)
             if response.status_code == 200:
                 data = response.json()
-                return data.get('text', '').strip()
+                text = data.get('text', '').strip()
+                if text:
+                    return text
+                logger.warning(f"Empty text from Bible API for {reference}")
+                return None
             else:
-                logger.warning(f"Bible API returned {response.status_code} for {reference}")
+                logger.warning(f"Bible API returned {response.status_code} for {reference} (url: {url})")
                 return None
         except Exception as e:
             logger.error(f"Error fetching verse {reference}: {e}")
@@ -357,7 +433,8 @@ async def get_settings():
             "notification_time": "07:00",
             "notification_enabled": True
         }
-        await db.settings.insert_one(default_settings)
+        result = await db.settings.insert_one(default_settings)
+        default_settings['_id'] = str(result.inserted_id)
         return default_settings
     return serialize_doc(settings)
 
@@ -497,6 +574,70 @@ async def clear_all_verses():
     """Clear all verses from database"""
     result = await db.verses.delete_many({})
     return {"message": f"Deleted {result.deleted_count} verses"}
+
+class BulkVerseImport(BaseModel):
+    references: List[str]
+
+@api_router.post("/import/bulk")
+async def import_bulk_verses(data: BulkVerseImport):
+    """Import multiple verses by reference - auto-fetches text from Bible API"""
+    import asyncio
+    
+    # Get the next order number
+    last_verse = await db.verses.find_one(sort=[("order", -1)])
+    next_order = (last_verse['order'] + 1) if last_verse else 1
+    
+    imported_count = 0
+    failed_refs = []
+    skipped_refs = []
+    
+    for reference in data.references:
+        reference = reference.strip()
+        if not reference:
+            continue
+        
+        # Check if verse already exists
+        existing = await db.verses.find_one({"reference": reference})
+        if existing:
+            skipped_refs.append(reference)
+            continue
+        
+        # Fetch verse text with retry and rate limiting
+        text = None
+        for attempt in range(3):
+            text = await fetch_verse_from_api(reference)
+            if text:
+                break
+            # Wait before retry (exponential backoff)
+            await asyncio.sleep(1 * (attempt + 1))
+        
+        if not text:
+            failed_refs.append(reference)
+            continue
+        
+        verse_doc = {
+            "reference": reference,
+            "text": text,
+            "audio_base64": None,
+            "order": next_order,
+            "date_added": datetime.utcnow()
+        }
+        
+        await db.verses.insert_one(verse_doc)
+        next_order += 1
+        imported_count += 1
+        logger.info(f"Imported verse: {reference}")
+        
+        # Rate limiting: wait 500ms between successful requests
+        await asyncio.sleep(0.5)
+    
+    return {
+        "message": f"Successfully imported {imported_count} verses",
+        "imported_count": imported_count,
+        "skipped_count": len(skipped_refs),
+        "failed_references": failed_refs,
+        "skipped_references": skipped_refs
+    }
 
 # Include the router in the main app
 app.include_router(api_router)
