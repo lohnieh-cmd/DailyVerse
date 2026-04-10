@@ -43,18 +43,24 @@ def serialize_doc(doc):
 
 class VerseCreate(BaseModel):
     reference: str
-    text: Optional[str] = None  # Optional - will be fetched from API if not provided
+    text: str  # Required - must be provided in exact translation
+    translation: Optional[str] = None  # e.g., "AFR53", "NIV", "NLV"
+    language: Optional[str] = None  # e.g., "Afr", "Eng"
     audio_base64: Optional[str] = None
 
 class VerseUpdate(BaseModel):
     reference: Optional[str] = None
     text: Optional[str] = None
+    translation: Optional[str] = None
+    language: Optional[str] = None
     audio_base64: Optional[str] = None
 
 class VerseResponse(BaseModel):
     id: str = Field(alias='_id')
     reference: str
     text: str
+    translation: Optional[str] = None
+    language: Optional[str] = None
     audio_base64: Optional[str] = None
     order: int
     date_added: datetime
@@ -70,6 +76,8 @@ class TodayVerseResponse(BaseModel):
     id: str
     reference: str
     text: str
+    translation: Optional[str] = None
+    language: Optional[str] = None
     audio_base64: Optional[str] = None
     verse_number: int
     total_verses: int
@@ -255,21 +263,19 @@ async def get_verses():
 
 @api_router.post("/verses")
 async def create_verse(verse: VerseCreate):
-    """Add a new verse - auto-fetches text from Bible API if not provided"""
+    """Add a new verse - text must be provided in exact translation"""
     # Get the next order number
     last_verse = await db.verses.find_one(sort=[("order", -1)])
     next_order = (last_verse['order'] + 1) if last_verse else 1
     
-    # Fetch verse text if not provided
-    text = verse.text
-    if not text:
-        text = await fetch_verse_from_api(verse.reference)
-        if not text:
-            raise HTTPException(status_code=400, detail=f"Could not fetch verse text for '{verse.reference}'. Please provide text manually.")
+    if not verse.text or not verse.text.strip():
+        raise HTTPException(status_code=400, detail="Verse text is required. Please provide the exact text in your preferred translation.")
     
     verse_doc = {
         "reference": verse.reference,
-        "text": text,
+        "text": verse.text.strip(),
+        "translation": verse.translation,
+        "language": verse.language,
         "audio_base64": verse.audio_base64,
         "order": next_order,
         "date_added": datetime.utcnow()
@@ -403,6 +409,8 @@ async def get_today_verse():
         "id": str(verse['_id']),
         "reference": verse['reference'],
         "text": verse['text'],
+        "translation": verse.get('translation'),
+        "language": verse.get('language'),
         "audio_base64": verse.get('audio_base64'),
         "verse_number": verse_index,
         "total_verses": total_verses,
@@ -456,7 +464,14 @@ async def update_settings(settings: SettingsUpdate):
 
 @api_router.post("/import/excel")
 async def import_excel(file: UploadFile = File(...)):
-    """Import verses from an Excel file. Column A should have verse references."""
+    """
+    Import verses from an Excel file.
+    Required columns:
+    - Column A: Verse reference (e.g., "Matt 21:22" or "Jes 53:5")
+    - Column B: Translation code (e.g., "NLV", "AFR53", "NIV")
+    - Column C: Language (e.g., "Afr", "Eng")
+    - Column D: Full verse text in exact translation
+    """
     import openpyxl
     
     if not file.filename.endswith(('.xlsx', '.xls')):
@@ -473,33 +488,38 @@ async def import_excel(file: UploadFile = File(...)):
         
         imported_count = 0
         failed_refs = []
+        skipped_refs = []
         
-        for row in sheet.iter_rows(min_row=1, max_col=2, values_only=True):
-            reference = row[0]
-            provided_text = row[1] if len(row) > 1 else None
+        for row in sheet.iter_rows(min_row=1, max_col=4, values_only=True):
+            reference = row[0] if len(row) > 0 else None
+            translation = row[1] if len(row) > 1 else None
+            language = row[2] if len(row) > 2 else None
+            text = row[3] if len(row) > 3 else None
             
             if not reference or str(reference).strip() == '':
                 continue
             
             reference = str(reference).strip()
             
-            # Check if verse already exists
-            existing = await db.verses.find_one({"reference": reference})
+            # Check if verse already exists (same reference + translation)
+            existing = await db.verses.find_one({
+                "reference": reference,
+                "translation": str(translation).strip() if translation else None
+            })
             if existing:
+                skipped_refs.append(reference)
                 continue
             
-            # Get verse text
-            text = str(provided_text).strip() if provided_text else None
-            if not text:
-                text = await fetch_verse_from_api(reference)
-            
-            if not text:
-                failed_refs.append(reference)
+            # Text is required - no auto-fetch
+            if not text or str(text).strip() == '':
+                failed_refs.append(f"{reference} (no text provided)")
                 continue
             
             verse_doc = {
                 "reference": reference,
-                "text": text,
+                "text": str(text).strip(),
+                "translation": str(translation).strip() if translation else None,
+                "language": str(language).strip() if language else None,
                 "audio_base64": None,
                 "order": next_order,
                 "date_added": datetime.utcnow()
@@ -512,7 +532,9 @@ async def import_excel(file: UploadFile = File(...)):
         return {
             "message": f"Successfully imported {imported_count} verses",
             "imported_count": imported_count,
-            "failed_references": failed_refs
+            "skipped_count": len(skipped_refs),
+            "failed_references": failed_refs,
+            "skipped_references": skipped_refs
         }
         
     except Exception as e:

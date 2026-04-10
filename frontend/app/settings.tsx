@@ -27,6 +27,8 @@ interface Verse {
   _id: string;
   reference: string;
   text: string;
+  translation?: string;
+  language?: string;
   audio_base64?: string;
   order: number;
   date_added: string;
@@ -354,8 +356,11 @@ export default function SettingsScreen() {
             )}
           </TouchableOpacity>
           <Text style={styles.importHint}>
-            Column A: Verse reference (e.g., "John 3:16")
-            {"\n"}Column B (optional): Verse text
+            Required columns:{"\n"}
+            • Column A: Verse reference (e.g., "Matt 21:22"){"\n"}
+            • Column B: Translation (e.g., "NLV", "AFR53", "NIV"){"\n"}
+            • Column C: Language (e.g., "Afr", "Eng"){"\n"}
+            • Column D: Full verse text in exact translation
           </Text>
 
           <TouchableOpacity 
@@ -398,7 +403,17 @@ export default function SettingsScreen() {
                 <View style={styles.verseInfo}>
                   <Text style={styles.verseOrder}>#{verse.order}</Text>
                   <View style={styles.verseDetails}>
-                    <Text style={styles.verseReference}>{verse.reference}</Text>
+                    <View style={styles.verseHeader}>
+                      <Text style={styles.verseReference}>{verse.reference}</Text>
+                      {verse.translation && (
+                        <Text style={styles.verseTranslation}>{verse.translation}</Text>
+                      )}
+                    </View>
+                    {verse.language && (
+                      <Text style={styles.verseLanguage}>
+                        {verse.language === 'Afr' ? 'Afrikaans' : verse.language === 'Eng' ? 'English' : verse.language}
+                      </Text>
+                    )}
                     <Text style={styles.versePreview} numberOfLines={2}>
                       {verse.text}
                     </Text>
@@ -657,10 +672,28 @@ const styles = StyleSheet.create({
   verseDetails: {
     flex: 1,
   },
+  verseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 2,
+  },
   verseReference: {
     fontSize: 16,
     fontWeight: '600',
     color: '#FFF',
+  },
+  verseTranslation: {
+    fontSize: 12,
+    color: '#D4AF37',
+    backgroundColor: 'rgba(212, 175, 55, 0.2)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  verseLanguage: {
+    fontSize: 11,
+    color: '#888',
     marginBottom: 4,
   },
   versePreview: {

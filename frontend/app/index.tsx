@@ -22,6 +22,8 @@ interface TodayVerse {
   id?: string;
   reference?: string;
   text?: string;
+  translation?: string;
+  language?: string;
   audio_base64?: string;
   verse_number?: number;
   total_verses?: number;
@@ -189,7 +191,14 @@ export default function HomeScreen() {
 
         <View style={styles.referenceContainer}>
           <Ionicons name="book" size={24} color="#D4AF37" />
-          <Text style={styles.referenceText}>{verse?.reference}</Text>
+          <View style={styles.referenceInfo}>
+            <Text style={styles.referenceText}>{verse?.reference}</Text>
+            {verse?.translation && (
+              <Text style={styles.translationText}>
+                {verse.translation} • {verse.language === 'Afr' ? 'Afrikaans' : verse.language === 'Eng' ? 'English' : verse.language}
+              </Text>
+            )}
+          </View>
         </View>
 
         <ScrollView 
@@ -370,13 +379,22 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 24,
     paddingVertical: 12,
+    paddingHorizontal: 16,
     backgroundColor: 'rgba(212, 175, 55, 0.1)',
     borderRadius: 12,
+  },
+  referenceInfo: {
+    alignItems: 'center',
   },
   referenceText: {
     fontSize: 20,
     fontWeight: '600',
     color: '#D4AF37',
+  },
+  translationText: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 4,
   },
   textScrollView: {
     maxHeight: 300,
