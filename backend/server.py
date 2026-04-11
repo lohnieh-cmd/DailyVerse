@@ -572,6 +572,13 @@ async def import_excel(file: UploadFile = File(...)):
         workbook = openpyxl.load_workbook(io.BytesIO(contents))
         sheet = workbook.active
         
+        # Log the first few rows to debug
+        logger.info(f"Excel file loaded. Sheet name: {sheet.title}")
+        row_count = 0
+        for row in sheet.iter_rows(min_row=1, max_row=5, max_col=6, values_only=True):
+            logger.info(f"Row {row_count}: {row}")
+            row_count += 1
+        
         # Get the next order number
         last_verse = await db.verses.find_one(sort=[("order", -1)])
         next_order = (last_verse['order'] + 1) if last_verse else 1
@@ -580,16 +587,27 @@ async def import_excel(file: UploadFile = File(...)):
         failed_refs = []
         skipped_refs = []
         
-        for row in sheet.iter_rows(min_row=1, max_col=4, values_only=True):
+        for row in sheet.iter_rows(min_row=1, max_col=6, values_only=True):
             reference = row[0] if len(row) > 0 else None
             translation = row[1] if len(row) > 1 else None
             language = row[2] if len(row) > 2 else None
             verse_url = row[3] if len(row) > 3 else None
             
+            # Also check columns 4 and 5 in case URL is there
+            if not verse_url or not str(verse_url).strip().startswith('http'):
+                verse_url = row[4] if len(row) > 4 else None
+            if not verse_url or not str(verse_url).strip().startswith('http'):
+                verse_url = row[5] if len(row) > 5 else None
+            
             if not reference or str(reference).strip() == '':
                 continue
             
+            # Skip header row
+            if str(reference).lower() in ['reference', 'verse', 'bible verse', 'book']:
+                continue
+            
             reference = str(reference).strip()
+            logger.info(f"Processing: {reference}, translation: {translation}, url: {verse_url}")
             
             # Check if verse already exists (same reference + translation)
             existing = await db.verses.find_one({
