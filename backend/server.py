@@ -204,6 +204,13 @@ async def fetch_verse_from_bible_com(url: str) -> str:
         logger.warning(f"Not a Bible.com URL: {url}")
         return None
     
+    # Convert search URL to direct URL for better results
+    if '/search/' in url:
+        direct_url = convert_search_url_to_direct(url)
+        if direct_url:
+            logger.info(f"Converted search URL to direct: {direct_url}")
+            url = direct_url
+    
     async with httpx.AsyncClient() as client:
         try:
             headers = {
@@ -218,46 +225,49 @@ async def fetch_verse_from_bible_com(url: str) -> str:
             html = response.text
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Try to find the verse text in the page
             # Method 1: Look for meta description (usually contains the verse)
             meta_desc = soup.find('meta', {'name': 'description'})
             if meta_desc and meta_desc.get('content'):
                 verse_text = meta_desc['content'].strip()
-                # Clean up common patterns
-                if verse_text and len(verse_text) > 10:
+                # Skip if it's just search results text
+                if verse_text and len(verse_text) > 10 and not verse_text.startswith('Search results'):
                     logger.info(f"Found verse from meta description: {verse_text[:50]}...")
                     return verse_text
             
-            # Method 2: Look for the verse content in the page structure
-            # Bible.com often has the verse in a specific structure
-            verse_elements = soup.find_all(['p', 'span', 'div'], class_=lambda x: x and ('verse' in x.lower() or 'content' in x.lower()))
-            for elem in verse_elements:
-                text = elem.get_text(strip=True)
-                if text and len(text) > 20 and len(text) < 2000:
-                    logger.info(f"Found verse from element: {text[:50]}...")
-                    return text
-            
-            # Method 3: Look for h2 with NLV or other patterns followed by verse text
-            h2_elements = soup.find_all('h2')
-            for h2 in h2_elements:
-                # Check if next sibling or parent contains verse text
-                next_elem = h2.find_next_sibling()
-                if next_elem:
-                    text = next_elem.get_text(strip=True)
-                    if text and len(text) > 20:
-                        # Remove common suffixes like "Read more"
-                        text = re.sub(r'Read\s+\w+\s*\d*.*$', '', text, flags=re.IGNORECASE).strip()
-                        if text:
-                            logger.info(f"Found verse after h2: {text[:50]}...")
-                            return text
-            
-            # Method 4: Extract from og:description
+            # Method 2: Look for og:description
             og_desc = soup.find('meta', {'property': 'og:description'})
             if og_desc and og_desc.get('content'):
                 verse_text = og_desc['content'].strip()
-                if verse_text and len(verse_text) > 10:
+                if verse_text and len(verse_text) > 10 and not verse_text.startswith('Search results'):
                     logger.info(f"Found verse from og:description: {verse_text[:50]}...")
                     return verse_text
+            
+            # Method 3: For search pages, try to find the first verse result
+            # Look for verse content in search results
+            verse_links = soup.find_all('a', href=lambda x: x and '/bible/' in x and not '/compare/' in x)
+            for link in verse_links[:3]:  # Check first 3 links
+                verse_text_elem = link.find_next(['p', 'div', 'span'])
+                if verse_text_elem:
+                    text = verse_text_elem.get_text(strip=True)
+                    if text and len(text) > 20 and len(text) < 2000:
+                        # Clean up
+                        text = re.sub(r'Read\s+\w+.*$', '', text, flags=re.IGNORECASE).strip()
+                        if text:
+                            logger.info(f"Found verse from search result: {text[:50]}...")
+                            return text
+            
+            # Method 4: Look for any substantial text content
+            for tag in ['p', 'div', 'span']:
+                elements = soup.find_all(tag)
+                for elem in elements:
+                    text = elem.get_text(strip=True)
+                    # Look for text that looks like a verse (has some punctuation, reasonable length)
+                    if text and 30 < len(text) < 1000 and ('.' in text or ',' in text):
+                        # Skip navigation/UI text
+                        if any(skip in text.lower() for skip in ['search', 'download', 'sign in', 'cookie', 'privacy']):
+                            continue
+                        logger.info(f"Found verse from content: {text[:50]}...")
+                        return text
             
             logger.warning(f"Could not extract verse text from {url}")
             return None
@@ -265,6 +275,166 @@ async def fetch_verse_from_bible_com(url: str) -> str:
         except Exception as e:
             logger.error(f"Error fetching verse from Bible.com {url}: {e}")
             return None
+
+def convert_search_url_to_direct(search_url: str) -> str:
+    """
+    Convert a Bible.com search URL to a direct verse URL.
+    
+    Search: https://www.bible.com/search/bible?query=Matt%2021:22%20NLV
+    Direct: https://www.bible.com/bible/117/MAT.21.22.NLV
+    """
+    import urllib.parse
+    
+    try:
+        # Parse the URL
+        parsed = urllib.parse.urlparse(search_url)
+        query_params = urllib.parse.parse_qs(parsed.query)
+        
+        if 'query' not in query_params:
+            return None
+        
+        query = urllib.parse.unquote(query_params['query'][0]).strip()
+        
+        # Parse the query: "Matt 21:22 NLV" or "Jes 53:5 AFR53"
+        parts = query.split()
+        if len(parts) < 2:
+            return None
+        
+        translation = parts[-1].upper()  # Last part is translation
+        verse_ref = ' '.join(parts[:-1])  # Everything else is verse reference
+        
+        # Get Bible ID for translation
+        bible_ids = {
+            'NLV': 117,    # Nuwe Lewende Vertaling
+            'AFR53': 5,    # Afrikaans 1933/53
+            'AFR83': 6,    # Afrikaans 1983 (CORRECTED - was 36)
+            'NIV': 111,    # New International Version
+            'KJV': 1,      # King James Version
+            'ESV': 59,     # English Standard Version
+            'NLT': 116,    # New Living Translation
+            'NKJV': 114,   # New King James Version
+            'MSG': 97,     # The Message
+            'AMP': 8,      # Amplified Bible
+            'DB': 143,     # Die Boodskap (Afrikaans)
+        }
+        
+        bible_id = bible_ids.get(translation)
+        if not bible_id:
+            logger.warning(f"Unknown translation: {translation}")
+            return None
+        
+        # Parse verse reference: "Matt 21:22" or "1 Kor 13:4-8" or "Fil4:19"
+        # Handle cases like "Fil4:19" (no space)
+        match = re.match(r'^(\d?\s?[A-Za-z]+)\s*(\d+):(\d+(?:-\d+)?)$', verse_ref)
+        if not match:
+            logger.warning(f"Could not parse verse reference: {verse_ref}")
+            return None
+        
+        book_name = match.group(1).strip()
+        chapter = match.group(2)
+        verse = match.group(3)
+        
+        # Convert book name to Bible.com format
+        book_codes = {
+            # Afrikaans book names
+            'matt': 'MAT', 'matteus': 'MAT',
+            'mark': 'MRK', 'markus': 'MRK',
+            'luk': 'LUK', 'lukas': 'LUK',
+            'joh': 'JHN', 'johannes': 'JHN',
+            'hand': 'ACT', 'handelinge': 'ACT',
+            'rom': 'ROM', 'romeine': 'ROM',
+            '1 kor': '1CO', '1kor': '1CO', '1 korintiërs': '1CO',
+            '2 kor': '2CO', '2kor': '2CO', '2 korintiërs': '2CO',
+            'gal': 'GAL', 'galasiërs': 'GAL',
+            'efe': 'EPH', 'efesiërs': 'EPH',
+            'fil': 'PHP', 'filippense': 'PHP',
+            'kol': 'COL', 'kolossense': 'COL',
+            '1 tes': '1TH', '1tes': '1TH',
+            '2 tes': '2TH', '2tes': '2TH',
+            '1 tim': '1TI', '1tim': '1TI',
+            '2 tim': '2TI', '2tim': '2TI',
+            'tit': 'TIT', 'titus': 'TIT',
+            'filem': 'PHM', 'filemon': 'PHM',
+            'heb': 'HEB', 'hebreërs': 'HEB',
+            'jak': 'JAS', 'jakobus': 'JAS',
+            '1 pet': '1PE', '1pet': '1PE',
+            '2 pet': '2PE', '2pet': '2PE',
+            '1 joh': '1JN', '1joh': '1JN',
+            '2 joh': '2JN', '2joh': '2JN',
+            '3 joh': '3JN', '3joh': '3JN',
+            'jud': 'JUD', 'judas': 'JUD',
+            'op': 'REV', 'openbaring': 'REV',
+            # Old Testament
+            'gen': 'GEN', 'genesis': 'GEN',
+            'eks': 'EXO', 'exodus': 'EXO',
+            'lev': 'LEV', 'levitikus': 'LEV',
+            'num': 'NUM', 'numeri': 'NUM',
+            'deut': 'DEU', 'deuteronomium': 'DEU',
+            'jos': 'JOS', 'josua': 'JOS',
+            'rig': 'JDG', 'rigters': 'JDG',
+            'rut': 'RUT', 'ruth': 'RUT',
+            '1 sam': '1SA', '1sam': '1SA',
+            '2 sam': '2SA', '2sam': '2SA',
+            '1 kon': '1KI', '1kon': '1KI',
+            '2 kon': '2KI', '2kon': '2KI',
+            '1 kron': '1CH', '1kron': '1CH',
+            '2 kron': '2CH', '2kron': '2CH',
+            'esra': 'EZR',
+            'neh': 'NEH', 'nehemia': 'NEH',
+            'est': 'EST', 'ester': 'EST',
+            'job': 'JOB',
+            'ps': 'PSA', 'psalm': 'PSA', 'psalms': 'PSA',
+            'spr': 'PRO', 'spreuke': 'PRO',
+            'pred': 'ECC', 'prediker': 'ECC',
+            'hgl': 'SNG', 'hooglied': 'SNG',
+            'jes': 'ISA', 'jesaja': 'ISA',
+            'jer': 'JER', 'jeremia': 'JER',
+            'klaagl': 'LAM', 'klaagliedere': 'LAM',
+            'eseg': 'EZK', 'esegiël': 'EZK',
+            'dan': 'DAN', 'daniël': 'DAN',
+            'hos': 'HOS', 'hosea': 'HOS',
+            'joel': 'JOL', 'joël': 'JOL',
+            'amos': 'AMO',
+            'ob': 'OBA', 'obadja': 'OBA',
+            'jona': 'JON',
+            'mig': 'MIC', 'miga': 'MIC',
+            'nah': 'NAM', 'nahum': 'NAM',
+            'hab': 'HAB', 'habakuk': 'HAB',
+            'sef': 'ZEP', 'sefanja': 'ZEP',
+            'hag': 'HAG', 'haggai': 'HAG',
+            'sag': 'ZEC', 'sagaria': 'ZEC',
+            'mal': 'MAL', 'maleagi': 'MAL',
+            # English variations
+            'matthew': 'MAT', 'luke': 'LUK', 'john': 'JHN',
+            'acts': 'ACT', 'romans': 'ROM',
+            '1 cor': '1CO', '2 cor': '2CO',
+            'galatians': 'GAL', 'ephesians': 'EPH',
+            'phil': 'PHP', 'philippians': 'PHP',
+            'col': 'COL', 'colossians': 'COL',
+            '1 thess': '1TH', '2 thess': '2TH',
+            '1 timothy': '1TI', '2 timothy': '2TI',
+            'hebrews': 'HEB', 'james': 'JAS',
+            '1 peter': '1PE', '2 peter': '2PE',
+            '1 john': '1JN', '2 john': '2JN', '3 john': '3JN',
+            'jude': 'JUD', 'revelation': 'REV',
+            'isaiah': 'ISA', 'jeremiah': 'JER',
+            'proverbs': 'PRO', 'prov': 'PRO',
+        }
+        
+        book_lower = book_name.lower()
+        book_code = book_codes.get(book_lower)
+        
+        if not book_code:
+            logger.warning(f"Unknown book name: {book_name}")
+            return None
+        
+        # Build direct URL
+        direct_url = f"https://www.bible.com/bible/{bible_id}/{book_code}.{chapter}.{verse}.{translation}"
+        return direct_url
+        
+    except Exception as e:
+        logger.error(f"Error converting search URL: {e}")
+        return None
 
 # Test endpoint for Bible.com URL fetching
 @api_router.get("/test-fetch")
