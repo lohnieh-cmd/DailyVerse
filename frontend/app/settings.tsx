@@ -360,7 +360,12 @@ export default function SettingsScreen() {
             • Column A: Verse reference (e.g., "Matt 21:22"){"\n"}
             • Column B: Translation (e.g., "NLV", "AFR53", "NIV"){"\n"}
             • Column C: Language (e.g., "Afr", "Eng"){"\n"}
-            • Column D: Full verse text in exact translation
+            • Column D: Bible.com URL{"\n\n"}
+            URL format: https://www.bible.com/bible/ID/BOOK.CH.VS.TRANS{"\n"}
+            Examples:{"\n"}
+            • NLV: bible.com/bible/117/MAT.21.22.NLV{"\n"}
+            • AFR53: bible.com/bible/5/ISA.53.5.AFR53{"\n"}
+            • NIV: bible.com/bible/111/JHN.3.16.NIV
           </Text>
 
           <TouchableOpacity 

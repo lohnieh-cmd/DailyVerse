@@ -11,6 +11,8 @@ from datetime import datetime, date
 from bson import ObjectId
 import httpx
 import io
+import re
+from bs4 import BeautifulSoup
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -183,6 +185,93 @@ async def fetch_verse_from_api(reference: str) -> str:
         except Exception as e:
             logger.error(f"Error fetching verse {reference}: {e}")
             return None
+
+async def fetch_verse_from_bible_com(url: str) -> str:
+    """
+    Fetch verse text from Bible.com URL.
+    Supports both direct verse URLs and search URLs.
+    
+    Direct URL format: https://www.bible.com/bible/117/MAT.21.22.NLV
+    Search URL format: https://www.bible.com/search/bible?query=Matt%2021:22%20NLV
+    """
+    if not url or not url.strip():
+        return None
+    
+    url = url.strip()
+    
+    # Make sure it's a bible.com URL
+    if 'bible.com' not in url:
+        logger.warning(f"Not a Bible.com URL: {url}")
+        return None
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = await client.get(url, headers=headers, timeout=15.0, follow_redirects=True)
+            
+            if response.status_code != 200:
+                logger.warning(f"Bible.com returned {response.status_code} for {url}")
+                return None
+            
+            html = response.text
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Try to find the verse text in the page
+            # Method 1: Look for meta description (usually contains the verse)
+            meta_desc = soup.find('meta', {'name': 'description'})
+            if meta_desc and meta_desc.get('content'):
+                verse_text = meta_desc['content'].strip()
+                # Clean up common patterns
+                if verse_text and len(verse_text) > 10:
+                    logger.info(f"Found verse from meta description: {verse_text[:50]}...")
+                    return verse_text
+            
+            # Method 2: Look for the verse content in the page structure
+            # Bible.com often has the verse in a specific structure
+            verse_elements = soup.find_all(['p', 'span', 'div'], class_=lambda x: x and ('verse' in x.lower() or 'content' in x.lower()))
+            for elem in verse_elements:
+                text = elem.get_text(strip=True)
+                if text and len(text) > 20 and len(text) < 2000:
+                    logger.info(f"Found verse from element: {text[:50]}...")
+                    return text
+            
+            # Method 3: Look for h2 with NLV or other patterns followed by verse text
+            h2_elements = soup.find_all('h2')
+            for h2 in h2_elements:
+                # Check if next sibling or parent contains verse text
+                next_elem = h2.find_next_sibling()
+                if next_elem:
+                    text = next_elem.get_text(strip=True)
+                    if text and len(text) > 20:
+                        # Remove common suffixes like "Read more"
+                        text = re.sub(r'Read\s+\w+\s*\d*.*$', '', text, flags=re.IGNORECASE).strip()
+                        if text:
+                            logger.info(f"Found verse after h2: {text[:50]}...")
+                            return text
+            
+            # Method 4: Extract from og:description
+            og_desc = soup.find('meta', {'property': 'og:description'})
+            if og_desc and og_desc.get('content'):
+                verse_text = og_desc['content'].strip()
+                if verse_text and len(verse_text) > 10:
+                    logger.info(f"Found verse from og:description: {verse_text[:50]}...")
+                    return verse_text
+            
+            logger.warning(f"Could not extract verse text from {url}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error fetching verse from Bible.com {url}: {e}")
+            return None
+
+# Test endpoint for Bible.com URL fetching
+@api_router.get("/test-fetch")
+async def test_fetch_url(url: str):
+    """Test endpoint to verify Bible.com URL fetching"""
+    text = await fetch_verse_from_bible_com(url)
+    return {"url": url, "text": text, "success": text is not None}
 
 # ==================== HOLIDAY API ====================
 
@@ -470,9 +559,10 @@ async def import_excel(file: UploadFile = File(...)):
     - Column A: Verse reference (e.g., "Matt 21:22" or "Jes 53:5")
     - Column B: Translation code (e.g., "NLV", "AFR53", "NIV")
     - Column C: Language (e.g., "Afr", "Eng")
-    - Column D: Full verse text in exact translation
+    - Column D: Bible.com URL to fetch the verse text from
     """
     import openpyxl
+    import asyncio
     
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Please upload an Excel file (.xlsx or .xls)")
@@ -494,7 +584,7 @@ async def import_excel(file: UploadFile = File(...)):
             reference = row[0] if len(row) > 0 else None
             translation = row[1] if len(row) > 1 else None
             language = row[2] if len(row) > 2 else None
-            text = row[3] if len(row) > 3 else None
+            verse_url = row[3] if len(row) > 3 else None
             
             if not reference or str(reference).strip() == '':
                 continue
@@ -510,14 +600,26 @@ async def import_excel(file: UploadFile = File(...)):
                 skipped_refs.append(reference)
                 continue
             
-            # Text is required - no auto-fetch
-            if not text or str(text).strip() == '':
-                failed_refs.append(f"{reference} (no text provided)")
+            # Fetch verse text from Bible.com URL
+            text = None
+            if verse_url and str(verse_url).strip().startswith('http'):
+                url = str(verse_url).strip()
+                logger.info(f"Fetching verse from URL: {url}")
+                
+                # Try fetching with retries
+                for attempt in range(3):
+                    text = await fetch_verse_from_bible_com(url)
+                    if text:
+                        break
+                    await asyncio.sleep(1 * (attempt + 1))
+            
+            if not text:
+                failed_refs.append(f"{reference} (could not fetch from URL)")
                 continue
             
             verse_doc = {
                 "reference": reference,
-                "text": str(text).strip(),
+                "text": text,
                 "translation": str(translation).strip() if translation else None,
                 "language": str(language).strip() if language else None,
                 "audio_base64": None,
@@ -528,6 +630,10 @@ async def import_excel(file: UploadFile = File(...)):
             await db.verses.insert_one(verse_doc)
             next_order += 1
             imported_count += 1
+            logger.info(f"Imported: {reference} ({translation})")
+            
+            # Rate limiting
+            await asyncio.sleep(0.5)
         
         return {
             "message": f"Successfully imported {imported_count} verses",
