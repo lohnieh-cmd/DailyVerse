@@ -729,17 +729,18 @@ async def import_excel(file: UploadFile = File(...)):
     - Column A: Verse reference (e.g., "Matt 21:22" or "Jes 53:5")
     - Column B: Translation code (e.g., "NLV", "AFR53", "NIV")
     - Column C: Language (e.g., "Afr", "Eng")
-    - Column D: Bible.com URL to fetch the verse text from
+    - Column D: (optional) Bible.com URL - if not provided or is a formula, URL will be built automatically
     """
     import openpyxl
     import asyncio
+    import urllib.parse
     
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Please upload an Excel file (.xlsx or .xls)")
     
     try:
         contents = await file.read()
-        workbook = openpyxl.load_workbook(io.BytesIO(contents))
+        workbook = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
         sheet = workbook.active
         
         # Log the first few rows to debug
@@ -777,16 +778,25 @@ async def import_excel(file: UploadFile = File(...)):
                 continue
             
             reference = str(reference).strip()
-            logger.info(f"Processing: {reference}, translation: {translation}, url: {verse_url}")
+            translation_str = str(translation).strip() if translation else None
+            logger.info(f"Processing: {reference}, translation: {translation_str}, url: {verse_url}")
             
             # Check if verse already exists (same reference + translation)
             existing = await db.verses.find_one({
                 "reference": reference,
-                "translation": str(translation).strip() if translation else None
+                "translation": translation_str
             })
             if existing:
                 skipped_refs.append(reference)
                 continue
+            
+            # Build URL from reference and translation if URL is not provided or is a formula
+            if not verse_url or not str(verse_url).strip().startswith('http'):
+                if translation_str:
+                    # Build search URL: https://www.bible.com/search/bible?query=Matt%2021:22%20NLV
+                    encoded_query = urllib.parse.quote(f"{reference} {translation_str}")
+                    verse_url = f"https://www.bible.com/search/bible?query={encoded_query}"
+                    logger.info(f"Built URL from reference+translation: {verse_url}")
             
             # Fetch verse text from Bible.com URL
             text = None
