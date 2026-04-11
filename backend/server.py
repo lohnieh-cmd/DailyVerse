@@ -322,7 +322,7 @@ def convert_search_url_to_direct(search_url: str) -> str:
         bible_ids = {
             'NLV': 117,    # Nuwe Lewende Vertaling
             'AFR53': 5,    # Afrikaans 1933/53
-            'AFR83': 6,    # Afrikaans 1983 (CORRECTED - was 36)
+            'AFR83': 6,    # Afrikaans 1983
             'NIV': 111,    # New International Version
             'KJV': 1,      # King James Version
             'ESV': 59,     # English Standard Version
@@ -331,6 +331,12 @@ def convert_search_url_to_direct(search_url: str) -> str:
             'MSG': 97,     # The Message
             'AMP': 8,      # Amplified Bible
             'DB': 143,     # Die Boodskap (Afrikaans)
+            # Additional translations
+            'GNB': 296,    # Good News Bible
+            'CEV': 37,     # Contemporary English Version
+            'GNT': 68,     # Good News Translation
+            'FBV': 1932,   # Free Bible Version
+            'EASY': 2079,  # EasyEnglish Bible
         }
         
         bible_id = bible_ids.get(translation)
