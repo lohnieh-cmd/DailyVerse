@@ -225,49 +225,64 @@ async def fetch_verse_from_bible_com(url: str) -> str:
             html = response.text
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Method 1: Look for meta description (usually contains the verse)
-            meta_desc = soup.find('meta', {'name': 'description'})
-            if meta_desc and meta_desc.get('content'):
-                verse_text = meta_desc['content'].strip()
-                # Skip if it's just search results text
-                if verse_text and len(verse_text) > 10 and not verse_text.startswith('Search results'):
-                    logger.info(f"Found verse from meta description: {verse_text[:50]}...")
-                    return verse_text
+            # Method 1: Look for verse content spans (most reliable for full text)
+            # Bible.com uses data-usfm attribute for verse content
+            verse_spans = soup.find_all('span', {'data-usfm': True})
+            if verse_spans:
+                full_text = []
+                for span in verse_spans:
+                    # Get text content, excluding verse numbers
+                    content = span.find('span', class_='content')
+                    if content:
+                        full_text.append(content.get_text(strip=True))
+                    else:
+                        # Fallback: get all text but try to remove verse numbers
+                        text = span.get_text(strip=True)
+                        # Remove leading verse numbers like "1", "2", etc.
+                        text = re.sub(r'^\d+\s*', '', text)
+                        if text:
+                            full_text.append(text)
+                
+                if full_text:
+                    combined = ' '.join(full_text)
+                    logger.info(f"Found verse from data-usfm spans: {combined[:80]}... (length: {len(combined)})")
+                    return combined
             
-            # Method 2: Look for og:description
+            # Method 2: Look for the ChapterContent div (contains full verses)
+            chapter_content = soup.find('div', class_=lambda x: x and 'ChapterContent' in x)
+            if chapter_content:
+                # Extract text from paragraph elements
+                paragraphs = chapter_content.find_all(['p', 'div'])
+                full_text = []
+                for p in paragraphs:
+                    text = p.get_text(strip=True)
+                    # Clean up verse numbers
+                    text = re.sub(r'\b\d+\b', ' ', text)
+                    text = ' '.join(text.split())
+                    if text and len(text) > 5:
+                        full_text.append(text)
+                
+                if full_text:
+                    combined = ' '.join(full_text)
+                    if len(combined) > 20:
+                        logger.info(f"Found verse from ChapterContent: {combined[:80]}... (length: {len(combined)})")
+                        return combined
+            
+            # Method 3: Look for meta og:description (may be truncated but better than nothing)
             og_desc = soup.find('meta', {'property': 'og:description'})
             if og_desc and og_desc.get('content'):
                 verse_text = og_desc['content'].strip()
                 if verse_text and len(verse_text) > 10 and not verse_text.startswith('Search results'):
-                    logger.info(f"Found verse from og:description: {verse_text[:50]}...")
+                    logger.info(f"Found verse from og:description: {verse_text[:80]}... (length: {len(verse_text)})")
                     return verse_text
             
-            # Method 3: For search pages, try to find the first verse result
-            # Look for verse content in search results
-            verse_links = soup.find_all('a', href=lambda x: x and '/bible/' in x and not '/compare/' in x)
-            for link in verse_links[:3]:  # Check first 3 links
-                verse_text_elem = link.find_next(['p', 'div', 'span'])
-                if verse_text_elem:
-                    text = verse_text_elem.get_text(strip=True)
-                    if text and len(text) > 20 and len(text) < 2000:
-                        # Clean up
-                        text = re.sub(r'Read\s+\w+.*$', '', text, flags=re.IGNORECASE).strip()
-                        if text:
-                            logger.info(f"Found verse from search result: {text[:50]}...")
-                            return text
-            
-            # Method 4: Look for any substantial text content
-            for tag in ['p', 'div', 'span']:
-                elements = soup.find_all(tag)
-                for elem in elements:
-                    text = elem.get_text(strip=True)
-                    # Look for text that looks like a verse (has some punctuation, reasonable length)
-                    if text and 30 < len(text) < 1000 and ('.' in text or ',' in text):
-                        # Skip navigation/UI text
-                        if any(skip in text.lower() for skip in ['search', 'download', 'sign in', 'cookie', 'privacy']):
-                            continue
-                        logger.info(f"Found verse from content: {text[:50]}...")
-                        return text
+            # Method 4: Look for meta description
+            meta_desc = soup.find('meta', {'name': 'description'})
+            if meta_desc and meta_desc.get('content'):
+                verse_text = meta_desc['content'].strip()
+                if verse_text and len(verse_text) > 10 and not verse_text.startswith('Search results'):
+                    logger.info(f"Found verse from meta description: {verse_text[:80]}... (length: {len(verse_text)})")
+                    return verse_text
             
             logger.warning(f"Could not extract verse text from {url}")
             return None
@@ -364,7 +379,7 @@ def convert_search_url_to_direct(search_url: str) -> str:
             '3 joh': '3JN', '3joh': '3JN',
             'jud': 'JUD', 'judas': 'JUD',
             'op': 'REV', 'openbaring': 'REV',
-            # Old Testament
+            # Old Testament Afrikaans
             'gen': 'GEN', 'genesis': 'GEN',
             'eks': 'EXO', 'exodus': 'EXO',
             'lev': 'LEV', 'levitikus': 'LEV',
@@ -373,52 +388,50 @@ def convert_search_url_to_direct(search_url: str) -> str:
             'jos': 'JOS', 'josua': 'JOS',
             'rig': 'JDG', 'rigters': 'JDG',
             'rut': 'RUT', 'ruth': 'RUT',
-            '1 sam': '1SA', '1sam': '1SA',
-            '2 sam': '2SA', '2sam': '2SA',
-            '1 kon': '1KI', '1kon': '1KI',
-            '2 kon': '2KI', '2kon': '2KI',
-            '1 kron': '1CH', '1kron': '1CH',
-            '2 kron': '2CH', '2kron': '2CH',
-            'esra': 'EZR',
-            'neh': 'NEH', 'nehemia': 'NEH',
-            'est': 'EST', 'ester': 'EST',
+            '1 sam': '1SA', '1sam': '1SA', '1 samuel': '1SA',
+            '2 sam': '2SA', '2sam': '2SA', '2 samuel': '2SA',
+            '1 kon': '1KI', '1kon': '1KI', '1 kings': '1KI',
+            '2 kon': '2KI', '2kon': '2KI', '2 kings': '2KI',
+            '1 kron': '1CH', '1kron': '1CH', '1 chro': '1CH', '1 chronicles': '1CH',
+            '2 kron': '2CH', '2kron': '2CH', '2 chro': '2CH', '2 chronicles': '2CH',
+            'esra': 'EZR', 'ezra': 'EZR',
+            'neh': 'NEH', 'nehemia': 'NEH', 'nehemiah': 'NEH',
+            'est': 'EST', 'ester': 'EST', 'esther': 'EST',
             'job': 'JOB',
             'ps': 'PSA', 'psalm': 'PSA', 'psalms': 'PSA',
-            'spr': 'PRO', 'spreuke': 'PRO',
-            'pred': 'ECC', 'prediker': 'ECC',
-            'hgl': 'SNG', 'hooglied': 'SNG',
-            'jes': 'ISA', 'jesaja': 'ISA',
-            'jer': 'JER', 'jeremia': 'JER',
-            'klaagl': 'LAM', 'klaagliedere': 'LAM',
-            'eseg': 'EZK', 'esegiël': 'EZK',
-            'dan': 'DAN', 'daniël': 'DAN',
+            'spr': 'PRO', 'spreuke': 'PRO', 'prov': 'PRO', 'proverbs': 'PRO',
+            'pred': 'ECC', 'prediker': 'ECC', 'ecclesiastes': 'ECC',
+            'hgl': 'SNG', 'hooglied': 'SNG', 'song': 'SNG',
+            'jes': 'ISA', 'jesaja': 'ISA', 'isaiah': 'ISA',
+            'jer': 'JER', 'jeremia': 'JER', 'jeremiah': 'JER',
+            'klaagl': 'LAM', 'klaagliedere': 'LAM', 'lamentations': 'LAM',
+            'eseg': 'EZK', 'esegiël': 'EZK', 'ezekiel': 'EZK',
+            'dan': 'DAN', 'daniël': 'DAN', 'daniel': 'DAN',
             'hos': 'HOS', 'hosea': 'HOS',
             'joel': 'JOL', 'joël': 'JOL',
             'amos': 'AMO',
-            'ob': 'OBA', 'obadja': 'OBA',
-            'jona': 'JON',
-            'mig': 'MIC', 'miga': 'MIC',
+            'ob': 'OBA', 'obadja': 'OBA', 'obadiah': 'OBA',
+            'jona': 'JON', 'jonah': 'JON',
+            'mig': 'MIC', 'miga': 'MIC', 'micah': 'MIC',
             'nah': 'NAM', 'nahum': 'NAM',
-            'hab': 'HAB', 'habakuk': 'HAB',
-            'sef': 'ZEP', 'sefanja': 'ZEP',
+            'hab': 'HAB', 'habakuk': 'HAB', 'habakkuk': 'HAB',
+            'sef': 'ZEP', 'sefanja': 'ZEP', 'zephaniah': 'ZEP',
             'hag': 'HAG', 'haggai': 'HAG',
-            'sag': 'ZEC', 'sagaria': 'ZEC',
-            'mal': 'MAL', 'maleagi': 'MAL',
-            # English variations
+            'sag': 'ZEC', 'sagaria': 'ZEC', 'zechariah': 'ZEC',
+            'mal': 'MAL', 'maleagi': 'MAL', 'malachi': 'MAL',
+            # English New Testament
             'matthew': 'MAT', 'luke': 'LUK', 'john': 'JHN',
             'acts': 'ACT', 'romans': 'ROM',
-            '1 cor': '1CO', '2 cor': '2CO',
+            '1 cor': '1CO', '2 cor': '2CO', '1 corinthians': '1CO', '2 corinthians': '2CO',
             'galatians': 'GAL', 'ephesians': 'EPH',
             'phil': 'PHP', 'philippians': 'PHP',
             'col': 'COL', 'colossians': 'COL',
-            '1 thess': '1TH', '2 thess': '2TH',
+            '1 thess': '1TH', '2 thess': '2TH', '1 thessalonians': '1TH', '2 thessalonians': '2TH',
             '1 timothy': '1TI', '2 timothy': '2TI',
             'hebrews': 'HEB', 'james': 'JAS',
             '1 peter': '1PE', '2 peter': '2PE',
             '1 john': '1JN', '2 john': '2JN', '3 john': '3JN',
             'jude': 'JUD', 'revelation': 'REV',
-            'isaiah': 'ISA', 'jeremiah': 'JER',
-            'proverbs': 'PRO', 'prov': 'PRO',
         }
         
         book_lower = book_name.lower()
@@ -428,8 +441,16 @@ def convert_search_url_to_direct(search_url: str) -> str:
             logger.warning(f"Unknown book name: {book_name}")
             return None
         
-        # Build direct URL
-        direct_url = f"https://www.bible.com/bible/{bible_id}/{book_code}.{chapter}.{verse}.{translation}"
+        # For verse ranges (e.g., "1-6"), use just the chapter to get full content
+        # This avoids the 200 char meta description limit
+        if '-' in verse:
+            # Verse range - fetch whole chapter for full text
+            direct_url = f"https://www.bible.com/bible/{bible_id}/{book_code}.{chapter}.{translation}"
+            logger.info(f"Using chapter URL for verse range: {direct_url}")
+        else:
+            # Single verse
+            direct_url = f"https://www.bible.com/bible/{bible_id}/{book_code}.{chapter}.{verse}.{translation}"
+        
         return direct_url
         
     except Exception as e:
