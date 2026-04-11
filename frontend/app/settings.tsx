@@ -81,6 +81,50 @@ export default function SettingsScreen() {
   }, []);
 
   const handleImportExcel = async () => {
+    if (Platform.OS === 'web') {
+      // For web, use native HTML file input
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel';
+      
+      input.onchange = async (e: any) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        
+        setImporting(true);
+        try {
+          const formData = new FormData();
+          formData.append('file', file);
+          
+          const uploadResponse = await fetch(`${BACKEND_URL}/api/import/excel`, {
+            method: 'POST',
+            body: formData,
+          });
+          
+          const data = await uploadResponse.json();
+          
+          if (uploadResponse.ok) {
+            Alert.alert(
+              'Import Complete',
+              `Imported ${data.imported_count} verses.${data.failed_references?.length ? `\nFailed: ${data.failed_references.slice(0, 5).join(', ')}${data.failed_references.length > 5 ? '...' : ''}` : ''}`
+            );
+            fetchData();
+          } else {
+            Alert.alert('Import Failed', data.detail || 'Unknown error');
+          }
+        } catch (err) {
+          console.error('Web upload error:', err);
+          Alert.alert('Error', 'Failed to upload file');
+        } finally {
+          setImporting(false);
+        }
+      };
+      
+      input.click();
+      return;
+    }
+    
+    // For native mobile
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: [
@@ -97,12 +141,6 @@ export default function SettingsScreen() {
       setImporting(true);
       const file = result.assets[0];
       
-      // Read file and convert to base64
-      const fileContent = await FileSystem.readAsStringAsync(file.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      // Create form data
       const formData = new FormData();
       formData.append('file', {
         uri: file.uri,
@@ -110,7 +148,7 @@ export default function SettingsScreen() {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       } as any);
 
-      const response = await fetch(`${BACKEND_URL}/api/import/excel`, {
+      const uploadResponse = await fetch(`${BACKEND_URL}/api/import/excel`, {
         method: 'POST',
         body: formData,
         headers: {
@@ -118,12 +156,12 @@ export default function SettingsScreen() {
         },
       });
 
-      const data = await response.json();
+      const data = await uploadResponse.json();
       
-      if (response.ok) {
+      if (uploadResponse.ok) {
         Alert.alert(
           'Import Complete',
-          `Imported ${data.imported_count} verses.${data.failed_references?.length ? `\nFailed: ${data.failed_references.join(', ')}` : ''}`
+          `Imported ${data.imported_count} verses.${data.failed_references?.length ? `\nFailed: ${data.failed_references.slice(0, 5).join(', ')}${data.failed_references.length > 5 ? '...' : ''}` : ''}`
         );
         fetchData();
       } else {
@@ -265,7 +303,7 @@ export default function SettingsScreen() {
       
       if (uri) {
         const base64 = await FileSystem.readAsStringAsync(uri, {
-          encoding: FileSystem.EncodingType.Base64,
+          encoding: 'base64',
         });
         setRecordedAudio(base64);
       }
