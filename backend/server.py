@@ -186,13 +186,15 @@ async def fetch_verse_from_api(reference: str) -> str:
             logger.error(f"Error fetching verse {reference}: {e}")
             return None
 
-async def fetch_verse_from_bible_com(url: str) -> str:
+async def fetch_verse_from_bible_com(url: str, verse_range: str = None) -> str:
     """
     Fetch verse text from Bible.com URL.
     Supports both direct verse URLs and search URLs.
     
     Direct URL format: https://www.bible.com/bible/117/MAT.21.22.NLV
     Search URL format: https://www.bible.com/search/bible?query=Matt%2021:22%20NLV
+    
+    verse_range: Optional string like "17-19" to extract specific verses from chapter
     """
     if not url or not url.strip():
         return None
@@ -205,10 +207,14 @@ async def fetch_verse_from_bible_com(url: str) -> str:
         return None
     
     # Convert search URL to direct URL for better results
+    # Also extract verse range info
+    start_verse = None
+    end_verse = None
+    
     if '/search/' in url:
-        direct_url = convert_search_url_to_direct(url)
+        direct_url, start_verse, end_verse = convert_search_url_to_direct(url)
         if direct_url:
-            logger.info(f"Converted search URL to direct: {direct_url}")
+            logger.info(f"Converted search URL to direct: {direct_url}, verses: {start_verse}-{end_verse}")
             url = direct_url
     
     async with httpx.AsyncClient() as client:
@@ -225,20 +231,48 @@ async def fetch_verse_from_bible_com(url: str) -> str:
             html = response.text
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Method 1: Look for verse content spans (most reliable for full text)
-            # Bible.com uses data-usfm attribute for verse content
+            # Method 1: Look for verse content spans with data-usfm attribute
+            # This allows us to extract specific verses
             verse_spans = soup.find_all('span', {'data-usfm': True})
+            if verse_spans and start_verse is not None:
+                # Extract only the verses we need
+                collected_text = []
+                for span in verse_spans:
+                    usfm = span.get('data-usfm', '')
+                    # usfm format is like "HAB.3.17" or "PSA.23.1"
+                    parts = usfm.split('.')
+                    if len(parts) >= 3:
+                        try:
+                            verse_num = int(parts[-1])
+                            # Check if this verse is in our range
+                            if start_verse <= verse_num <= end_verse:
+                                # Get text content
+                                content = span.find('span', class_='content')
+                                if content:
+                                    text = content.get_text(strip=True)
+                                else:
+                                    text = span.get_text(strip=True)
+                                    # Remove leading verse number
+                                    text = re.sub(r'^\d+\s*', '', text)
+                                if text:
+                                    collected_text.append(text)
+                        except ValueError:
+                            continue
+                
+                if collected_text:
+                    combined = ' '.join(collected_text)
+                    logger.info(f"Extracted verses {start_verse}-{end_verse}: {combined[:80]}... (length: {len(combined)})")
+                    return combined
+            
+            # Method 2: If we have verse spans but no range specified, get all
             if verse_spans:
                 full_text = []
                 for span in verse_spans:
-                    # Get text content, excluding verse numbers
                     content = span.find('span', class_='content')
                     if content:
                         full_text.append(content.get_text(strip=True))
                     else:
-                        # Fallback: get all text but try to remove verse numbers
                         text = span.get_text(strip=True)
-                        # Remove leading verse numbers like "1", "2", etc.
                         text = re.sub(r'^\d+\s*', '', text)
                         if text:
                             full_text.append(text)
@@ -248,27 +282,7 @@ async def fetch_verse_from_bible_com(url: str) -> str:
                     logger.info(f"Found verse from data-usfm spans: {combined[:80]}... (length: {len(combined)})")
                     return combined
             
-            # Method 2: Look for the ChapterContent div (contains full verses)
-            chapter_content = soup.find('div', class_=lambda x: x and 'ChapterContent' in x)
-            if chapter_content:
-                # Extract text from paragraph elements
-                paragraphs = chapter_content.find_all(['p', 'div'])
-                full_text = []
-                for p in paragraphs:
-                    text = p.get_text(strip=True)
-                    # Clean up verse numbers
-                    text = re.sub(r'\b\d+\b', ' ', text)
-                    text = ' '.join(text.split())
-                    if text and len(text) > 5:
-                        full_text.append(text)
-                
-                if full_text:
-                    combined = ' '.join(full_text)
-                    if len(combined) > 20:
-                        logger.info(f"Found verse from ChapterContent: {combined[:80]}... (length: {len(combined)})")
-                        return combined
-            
-            # Method 3: Look for meta og:description (may be truncated but better than nothing)
+            # Method 3: Look for meta og:description (fallback, may be truncated)
             og_desc = soup.find('meta', {'property': 'og:description'})
             if og_desc and og_desc.get('content'):
                 verse_text = og_desc['content'].strip()
@@ -291,12 +305,14 @@ async def fetch_verse_from_bible_com(url: str) -> str:
             logger.error(f"Error fetching verse from Bible.com {url}: {e}")
             return None
 
-def convert_search_url_to_direct(search_url: str) -> str:
+def convert_search_url_to_direct(search_url: str) -> tuple:
     """
     Convert a Bible.com search URL to a direct verse URL.
     
     Search: https://www.bible.com/search/bible?query=Matt%2021:22%20NLV
     Direct: https://www.bible.com/bible/117/MAT.21.22.NLV
+    
+    Returns: (direct_url, start_verse, end_verse) or (None, None, None)
     """
     import urllib.parse
     
@@ -306,14 +322,14 @@ def convert_search_url_to_direct(search_url: str) -> str:
         query_params = urllib.parse.parse_qs(parsed.query)
         
         if 'query' not in query_params:
-            return None
+            return None, None, None
         
         query = urllib.parse.unquote(query_params['query'][0]).strip()
         
         # Parse the query: "Matt 21:22 NLV" or "Jes 53:5 AFR53"
         parts = query.split()
         if len(parts) < 2:
-            return None
+            return None, None, None
         
         translation = parts[-1].upper()  # Last part is translation
         verse_ref = ' '.join(parts[:-1])  # Everything else is verse reference
@@ -342,18 +358,29 @@ def convert_search_url_to_direct(search_url: str) -> str:
         bible_id = bible_ids.get(translation)
         if not bible_id:
             logger.warning(f"Unknown translation: {translation}")
-            return None
+            return None, None, None
         
         # Parse verse reference: "Matt 21:22" or "1 Kor 13:4-8" or "Fil4:19"
         # Handle cases like "Fil4:19" (no space)
         match = re.match(r'^(\d?\s?[A-Za-z]+)\s*(\d+):(\d+(?:-\d+)?)$', verse_ref)
         if not match:
             logger.warning(f"Could not parse verse reference: {verse_ref}")
-            return None
+            return None, None, None
         
         book_name = match.group(1).strip()
         chapter = match.group(2)
         verse = match.group(3)
+        
+        # Parse verse range
+        start_verse = None
+        end_verse = None
+        if '-' in verse:
+            verse_parts = verse.split('-')
+            start_verse = int(verse_parts[0])
+            end_verse = int(verse_parts[1])
+        else:
+            start_verse = int(verse)
+            end_verse = int(verse)
         
         # Convert book name to Bible.com format
         book_codes = {
@@ -445,23 +472,22 @@ def convert_search_url_to_direct(search_url: str) -> str:
         
         if not book_code:
             logger.warning(f"Unknown book name: {book_name}")
-            return None
+            return None, None, None
         
-        # For verse ranges (e.g., "1-6"), use just the chapter to get full content
-        # This avoids the 200 char meta description limit
-        if '-' in verse:
-            # Verse range - fetch whole chapter for full text
+        # For verse ranges, use chapter URL to get full content, then extract specific verses
+        if start_verse != end_verse:
+            # Verse range - fetch whole chapter for full text extraction
             direct_url = f"https://www.bible.com/bible/{bible_id}/{book_code}.{chapter}.{translation}"
-            logger.info(f"Using chapter URL for verse range: {direct_url}")
+            logger.info(f"Using chapter URL for verse range {start_verse}-{end_verse}: {direct_url}")
         else:
             # Single verse
             direct_url = f"https://www.bible.com/bible/{bible_id}/{book_code}.{chapter}.{verse}.{translation}"
         
-        return direct_url
+        return direct_url, start_verse, end_verse
         
     except Exception as e:
         logger.error(f"Error converting search URL: {e}")
-        return None
+        return None, None, None
 
 # Test endpoint for Bible.com URL fetching
 @api_router.get("/test-fetch")
