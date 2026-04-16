@@ -316,6 +316,59 @@ export default function SettingsScreen() {
     }
   };
 
+  const importAudioFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['audio/*'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets?.[0]) {
+        return;
+      }
+
+      const file = result.assets[0];
+      console.log('Selected audio file:', file);
+
+      // Check file size (limit to 10MB for base64 encoding)
+      if (file.size && file.size > 10 * 1024 * 1024) {
+        Alert.alert('File Too Large', 'Please select an audio file smaller than 10MB');
+        return;
+      }
+
+      // Read file and convert to base64
+      let base64: string;
+      
+      if (Platform.OS === 'web') {
+        // For web, fetch the file and convert to base64
+        const response = await fetch(file.uri);
+        const blob = await response.blob();
+        base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            // Remove data URL prefix (e.g., "data:audio/mp4;base64,")
+            const base64Data = result.split(',')[1];
+            resolve(base64Data);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } else {
+        // For native, use FileSystem
+        base64 = await FileSystem.readAsStringAsync(file.uri, {
+          encoding: 'base64',
+        });
+      }
+
+      setRecordedAudio(base64);
+      Alert.alert('Success', `Audio file "${file.name}" imported successfully!`);
+    } catch (err) {
+      console.error('Import audio error:', err);
+      Alert.alert('Error', 'Failed to import audio file');
+    }
+  };
+
   const handleNotificationToggle = async (enabled: boolean) => {
     try {
       setSettings(prev => ({ ...prev, notification_enabled: enabled }));
@@ -537,27 +590,42 @@ export default function SettingsScreen() {
                 {recordedAudio ? (
                   <View style={styles.recordedIndicator}>
                     <Ionicons name="checkmark-circle" size={24} color="#27AE60" />
-                    <Text style={styles.recordedText}>Audio recorded</Text>
+                    <Text style={styles.recordedText}>Audio attached</Text>
                     <TouchableOpacity onPress={() => setRecordedAudio(null)}>
                       <Ionicons name="close-circle" size={24} color="#E74C3C" />
                     </TouchableOpacity>
                   </View>
                 ) : (
-                  <TouchableOpacity
-                    style={[styles.recordButton, isRecording && styles.recordingActive]}
-                    onPress={isRecording ? stopRecording : startRecording}
-                  >
-                    <Ionicons 
-                      name={isRecording ? "stop" : "mic"} 
-                      size={32} 
-                      color={isRecording ? "#E74C3C" : "#D4AF37"} 
-                    />
-                    <Text style={styles.recordButtonText}>
-                      {isRecording ? 'Stop Recording' : 'Start Recording'}
-                    </Text>
-                  </TouchableOpacity>
+                  <View style={styles.audioOptionsContainer}>
+                    <TouchableOpacity
+                      style={[styles.audioOptionButton, isRecording && styles.recordingActive]}
+                      onPress={isRecording ? stopRecording : startRecording}
+                    >
+                      <Ionicons 
+                        name={isRecording ? "stop" : "mic"} 
+                        size={28} 
+                        color={isRecording ? "#E74C3C" : "#D4AF37"} 
+                      />
+                      <Text style={styles.audioOptionText}>
+                        {isRecording ? 'Stop' : 'Record'}
+                      </Text>
+                    </TouchableOpacity>
+                    
+                    <View style={styles.audioOptionDivider} />
+                    
+                    <TouchableOpacity
+                      style={styles.audioOptionButton}
+                      onPress={importAudioFile}
+                    >
+                      <Ionicons name="folder-open" size={28} color="#D4AF37" />
+                      <Text style={styles.audioOptionText}>Import</Text>
+                    </TouchableOpacity>
+                  </View>
                 )}
               </View>
+              <Text style={styles.audioHint}>
+                Import voice memos from Files app or record directly
+              </Text>
             </ScrollView>
 
             <View style={styles.modalFooter}>
@@ -807,6 +875,40 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   recordingContainer: {
+    marginBottom: 8,
+  },
+  audioOptionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#D4AF37',
+    borderStyle: 'dashed',
+    padding: 16,
+  },
+  audioOptionButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+  audioOptionText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#D4AF37',
+  },
+  audioOptionDivider: {
+    width: 1,
+    height: 50,
+    backgroundColor: 'rgba(212, 175, 55, 0.3)',
+    marginHorizontal: 16,
+  },
+  audioHint: {
+    fontSize: 12,
+    color: '#888',
+    textAlign: 'center',
     marginBottom: 20,
   },
   recordButton: {
