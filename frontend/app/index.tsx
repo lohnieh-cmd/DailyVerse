@@ -8,6 +8,8 @@ import {
   ActivityIndicator,
   RefreshControl,
   Platform,
+  Share,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -112,6 +114,31 @@ export default function HomeScreen() {
     }
   };
 
+  const shareVerse = async () => {
+    if (!verse?.reference || !verse?.text) return;
+
+    try {
+      const translationInfo = verse.translation ? ` (${verse.translation})` : '';
+      const message = `📖 ${verse.reference}${translationInfo}\n\n"${verse.text}"\n\n— Daily Scripture Verse`;
+      
+      const result = await Share.share({
+        message: message,
+        title: `${verse.reference} - Daily Scripture`,
+      });
+
+      if (result.action === Share.sharedAction) {
+        if (result.activityType) {
+          console.log('Shared with activity type:', result.activityType);
+        } else {
+          console.log('Verse shared successfully');
+        }
+      }
+    } catch (error: any) {
+      Alert.alert('Error', 'Could not share the verse');
+      console.error('Share error:', error);
+    }
+  };
+
   const renderContent = () => {
     if (loading) {
       return (
@@ -208,18 +235,25 @@ export default function HomeScreen() {
           <Text style={styles.verseText}>"{verse?.text}"</Text>
         </ScrollView>
 
-        {verse?.audio_base64 && (
-          <TouchableOpacity style={styles.audioButton} onPress={playAudio}>
-            <Ionicons 
-              name={isPlaying ? "pause-circle" : "play-circle"} 
-              size={56} 
-              color="#D4AF37" 
-            />
-            <Text style={styles.audioButtonText}>
-              {isPlaying ? 'Pause' : 'Listen'}
-            </Text>
+        <View style={styles.actionButtonsContainer}>
+          {verse?.audio_base64 && (
+            <TouchableOpacity style={styles.actionButton} onPress={playAudio}>
+              <Ionicons 
+                name={isPlaying ? "pause-circle" : "play-circle"} 
+                size={48} 
+                color="#D4AF37" 
+              />
+              <Text style={styles.actionButtonText}>
+                {isPlaying ? 'Pause' : 'Listen'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          
+          <TouchableOpacity style={styles.actionButton} onPress={shareVerse}>
+            <Ionicons name="share-social" size={48} color="#D4AF37" />
+            <Text style={styles.actionButtonText}>Share</Text>
           </TouchableOpacity>
-        )}
+        </View>
 
         <View style={styles.progressContainer}>
           <Text style={styles.progressText}>
@@ -406,6 +440,21 @@ const styles = StyleSheet.create({
     color: '#F5F5F5',
     textAlign: 'center',
     fontStyle: 'italic',
+  },
+  actionButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 40,
+    marginVertical: 20,
+  },
+  actionButton: {
+    alignItems: 'center',
+  },
+  actionButtonText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#D4AF37',
   },
   audioButton: {
     alignItems: 'center',
