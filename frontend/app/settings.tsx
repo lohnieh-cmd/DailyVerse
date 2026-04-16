@@ -316,10 +316,12 @@ export default function SettingsScreen() {
     }
   };
 
-  const importAudioFile = async () => {
+  const [voiceMemoGuideVisible, setVoiceMemoGuideVisible] = useState(false);
+
+  const pickAudioFile = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['audio/*'],
+        type: ['audio/*', 'audio/mp4', 'audio/m4a', 'audio/x-m4a', 'audio/mpeg', 'audio/wav', 'audio/aac'],
         copyToCacheDirectory: true,
       });
 
@@ -340,14 +342,12 @@ export default function SettingsScreen() {
       let base64: string;
       
       if (Platform.OS === 'web') {
-        // For web, fetch the file and convert to base64
         const response = await fetch(file.uri);
         const blob = await response.blob();
         base64 = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onloadend = () => {
             const result = reader.result as string;
-            // Remove data URL prefix (e.g., "data:audio/mp4;base64,")
             const base64Data = result.split(',')[1];
             resolve(base64Data);
           };
@@ -355,7 +355,6 @@ export default function SettingsScreen() {
           reader.readAsDataURL(blob);
         });
       } else {
-        // For native, use FileSystem
         base64 = await FileSystem.readAsStringAsync(file.uri, {
           encoding: 'base64',
         });
@@ -367,6 +366,21 @@ export default function SettingsScreen() {
       console.error('Import audio error:', err);
       Alert.alert('Error', 'Failed to import audio file');
     }
+  };
+
+  const importAudioFile = async () => {
+    if (Platform.OS === 'ios') {
+      // Show the voice memo guide modal for iOS users
+      setVoiceMemoGuideVisible(true);
+    } else {
+      // On Android/Web, directly open picker
+      pickAudioFile();
+    }
+  };
+
+  const handleGuideOpenPicker = () => {
+    setVoiceMemoGuideVisible(false);
+    pickAudioFile();
   };
 
   const handleNotificationToggle = async (enabled: boolean) => {
@@ -624,17 +638,15 @@ export default function SettingsScreen() {
                 )}
               </View>
               
-              <View style={styles.voiceMemoTipContainer}>
-                <Ionicons name="information-circle" size={18} color="#D4AF37" />
-                <Text style={styles.voiceMemoTipText}>
-                  To import Voice Memos:{"\n"}
-                  1. Open Voice Memos app{"\n"}
-                  2. Tap a recording → tap ••• (more){"\n"}
-                  3. Choose "Save to Files"{"\n"}
-                  4. Save to "On My iPhone" or iCloud{"\n"}
-                  5. Then tap Import above
-                </Text>
-              </View>
+              {Platform.OS === 'ios' && (
+                <View style={styles.voiceMemoTipContainer}>
+                  <Ionicons name="information-circle" size={18} color="#D4AF37" />
+                  <Text style={styles.voiceMemoTipText}>
+                    iPhone: Tap "Import" above to see step-by-step{"\n"}
+                    instructions for importing Voice Memos.
+                  </Text>
+                </View>
+              )}
             </ScrollView>
 
             <View style={styles.modalFooter}>
@@ -653,6 +665,120 @@ export default function SettingsScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Voice Memo Import Guide Modal (iOS) */}
+      <Modal
+        visible={voiceMemoGuideVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setVoiceMemoGuideVisible(false)}
+      >
+        <View style={styles.guideOverlay}>
+          <View style={styles.guideContent}>
+            <View style={styles.guideHeader}>
+              <Ionicons name="mic" size={28} color="#D4AF37" />
+              <Text style={styles.guideTitle}>Import Voice Memo</Text>
+              <TouchableOpacity
+                onPress={() => setVoiceMemoGuideVisible(false)}
+                style={styles.guideCloseBtn}
+              >
+                <Ionicons name="close" size={24} color="#888" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.guideBody} showsVerticalScrollIndicator={false}>
+              <Text style={styles.guideIntro}>
+                iPhone Voice Memos are stored in a private folder. Follow these steps to make them available for import:
+              </Text>
+
+              <View style={styles.guideStep}>
+                <View style={styles.guideStepNumber}>
+                  <Text style={styles.guideStepNumberText}>1</Text>
+                </View>
+                <View style={styles.guideStepContent}>
+                  <Text style={styles.guideStepTitle}>Open Voice Memos app</Text>
+                  <Text style={styles.guideStepDesc}>
+                    Find and open the Voice Memos app on your iPhone
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.guideStep}>
+                <View style={styles.guideStepNumber}>
+                  <Text style={styles.guideStepNumberText}>2</Text>
+                </View>
+                <View style={styles.guideStepContent}>
+                  <Text style={styles.guideStepTitle}>Select your recording</Text>
+                  <Text style={styles.guideStepDesc}>
+                    Tap on the voice memo you want to import
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.guideStep}>
+                <View style={styles.guideStepNumber}>
+                  <Text style={styles.guideStepNumberText}>3</Text>
+                </View>
+                <View style={styles.guideStepContent}>
+                  <Text style={styles.guideStepTitle}>Tap the three dots  (•••)</Text>
+                  <Text style={styles.guideStepDesc}>
+                    Look for the "•••" or "More" button near the recording
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.guideStep}>
+                <View style={styles.guideStepNumber}>
+                  <Text style={styles.guideStepNumberText}>4</Text>
+                </View>
+                <View style={styles.guideStepContent}>
+                  <Text style={styles.guideStepTitle}>Choose "Save to Files"</Text>
+                  <Text style={styles.guideStepDesc}>
+                    From the menu, select "Save to Files"
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.guideStep}>
+                <View style={styles.guideStepNumber}>
+                  <Text style={styles.guideStepNumberText}>5</Text>
+                </View>
+                <View style={styles.guideStepContent}>
+                  <Text style={styles.guideStepTitle}>Save to "On My iPhone"</Text>
+                  <Text style={styles.guideStepDesc}>
+                    Choose "On My iPhone" as the save location. You can also create a folder like "Voice Memos" to keep them organized. Then tap "Save".
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.guideDivider} />
+
+              <Text style={styles.guideReadyTitle}>Ready to import?</Text>
+              <Text style={styles.guideReadyDesc}>
+                After saving to Files, tap the button below. In the file picker, navigate to:{"\n\n"}
+                Browse {'>'} On My iPhone {'>'} (your file){"\n\n"}
+                Or check "Recents" to quickly find it.
+              </Text>
+            </ScrollView>
+
+            <View style={styles.guideFooter}>
+              <TouchableOpacity
+                style={styles.guideCancelBtn}
+                onPress={() => setVoiceMemoGuideVisible(false)}
+              >
+                <Text style={styles.guideCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.guidePickerBtn}
+                onPress={handleGuideOpenPicker}
+              >
+                <Ionicons name="folder-open" size={20} color="#1A1A2E" />
+                <Text style={styles.guidePickerText}>Open File Picker</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -980,6 +1106,128 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1A1A2E',
+  },
+  // Voice Memo Guide Modal Styles
+  guideOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'flex-end',
+  },
+  guideContent: {
+    backgroundColor: '#1A1A2E',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+  },
+  guideHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(212, 175, 55, 0.2)',
+    gap: 12,
+  },
+  guideTitle: {
+    flex: 1,
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  guideCloseBtn: {
+    padding: 4,
+  },
+  guideBody: {
+    padding: 20,
+  },
+  guideIntro: {
+    fontSize: 14,
+    color: '#AAA',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  guideStep: {
+    flexDirection: 'row',
+    marginBottom: 20,
+    gap: 14,
+  },
+  guideStepNumber: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#D4AF37',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guideStepNumberText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1A1A2E',
+  },
+  guideStepContent: {
+    flex: 1,
+  },
+  guideStepTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFF',
+    marginBottom: 4,
+  },
+  guideStepDesc: {
+    fontSize: 13,
+    color: '#999',
+    lineHeight: 18,
+  },
+  guideDivider: {
+    height: 1,
+    backgroundColor: 'rgba(212, 175, 55, 0.2)',
+    marginVertical: 20,
+  },
+  guideReadyTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#D4AF37',
+    marginBottom: 8,
+  },
+  guideReadyDesc: {
+    fontSize: 14,
+    color: '#CCC',
+    lineHeight: 22,
+    marginBottom: 8,
+  },
+  guideFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  guideCancelBtn: {
+    flex: 1,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guideCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#888',
+  },
+  guidePickerBtn: {
+    flex: 2,
+    flexDirection: 'row',
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: '#D4AF37',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  guidePickerText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#1A1A2E',
