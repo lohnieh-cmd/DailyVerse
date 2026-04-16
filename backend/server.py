@@ -346,7 +346,7 @@ def convert_search_url_to_direct(search_url: str) -> tuple:
             'NKJV': 114,   # New King James Version
             'MSG': 97,     # The Message
             'AMP': 8,      # Amplified Bible
-            'DB': 143,     # Die Boodskap (Afrikaans)
+            'DB': 50,     # Die Boodskap (Afrikaans) - CORRECTED from 143
             # Additional translations
             'GNB': 296,    # Good News Bible
             'CEV': 37,     # Contemporary English Version
