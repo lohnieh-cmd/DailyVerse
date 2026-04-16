@@ -18,7 +18,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import { File as ExpoFile } from 'expo-file-system';
 import { Audio } from 'expo-av';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
@@ -302,9 +302,8 @@ export default function SettingsScreen() {
       const uri = recording.getURI();
       
       if (uri) {
-        const base64 = await FileSystem.readAsStringAsync(uri, {
-          encoding: 'base64',
-        });
+        const audioFile = new ExpoFile(uri);
+        const base64 = await audioFile.base64();
         setRecordedAudio(base64);
       }
       
@@ -355,16 +354,15 @@ export default function SettingsScreen() {
           reader.readAsDataURL(blob);
         });
       } else {
-        base64 = await FileSystem.readAsStringAsync(file.uri, {
-          encoding: 'base64',
-        });
+        const audioFile = new ExpoFile(file.uri);
+        base64 = await audioFile.base64();
       }
 
       setRecordedAudio(base64);
       Alert.alert('Success', `Audio file "${file.name}" imported successfully!`);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Import audio error:', err);
-      Alert.alert('Error', 'Failed to import audio file');
+      Alert.alert('Import Error', err?.message || 'Failed to import audio file. Please try again.');
     }
   };
 
