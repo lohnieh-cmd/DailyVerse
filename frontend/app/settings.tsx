@@ -623,9 +623,18 @@ export default function SettingsScreen() {
                   </View>
                 )}
               </View>
-              <Text style={styles.audioHint}>
-                Import voice memos from Files app or record directly
-              </Text>
+              
+              <View style={styles.voiceMemoTipContainer}>
+                <Ionicons name="information-circle" size={18} color="#D4AF37" />
+                <Text style={styles.voiceMemoTipText}>
+                  To import Voice Memos:{"\n"}
+                  1. Open Voice Memos app{"\n"}
+                  2. Tap a recording → tap ••• (more){"\n"}
+                  3. Choose "Save to Files"{"\n"}
+                  4. Save to "On My iPhone" or iCloud{"\n"}
+                  5. Then tap Import above
+                </Text>
+              </View>
             </ScrollView>
 
             <View style={styles.modalFooter}>
