@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 import { router } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 
@@ -71,6 +72,15 @@ export default function HomeScreen() {
     };
   }, []);
 
+  // Unload sound when the verse changes so we load fresh audio next time
+  useEffect(() => {
+    if (sound) {
+      sound.unloadAsync();
+      setSound(null);
+      setIsPlaying(false);
+    }
+  }, [verse?.reference]);
+
   const setupNotifications = async () => {
     const { status } = await Notifications.requestPermissionsAsync();
     if (status !== 'granted') {
@@ -87,6 +97,7 @@ export default function HomeScreen() {
     if (!verse?.audio_base64) return;
 
     try {
+      // If a sound is already loaded, just play/pause it
       if (sound) {
         if (isPlaying) {
           await sound.pauseAsync();
@@ -95,20 +106,35 @@ export default function HomeScreen() {
           await sound.playAsync();
           setIsPlaying(true);
         }
-      } else {
-        const { sound: newSound } = await Audio.Sound.createAsync(
-          { uri: `data:audio/mp3;base64,${verse.audio_base64}` },
-          { shouldPlay: true }
-        );
-        setSound(newSound);
-        setIsPlaying(true);
-        
-        newSound.setOnPlaybackStatusUpdate((status) => {
-          if (status.isLoaded && status.didJustFinish) {
-            setIsPlaying(false);
-          }
-        });
+        return;
       }
+
+      // Set audio mode for playback through the speaker (not earpiece)
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+      });
+
+      // Write base64 audio to a temp file so iOS AVPlayer can read it reliably.
+      // Using .m4a because Voice Memos export AAC in an MPEG-4 container.
+      const tempUri = `${FileSystem.cacheDirectory}verse_audio.m4a`;
+      await FileSystem.writeAsStringAsync(tempUri, verse.audio_base64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const { sound: newSound } = await Audio.Sound.createAsync(
+        { uri: tempUri },
+        { shouldPlay: true }
+      );
+      setSound(newSound);
+      setIsPlaying(true);
+
+      newSound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded && status.didJustFinish) {
+          setIsPlaying(false);
+        }
+      });
     } catch (err) {
       console.error('Error playing audio:', err);
     }
