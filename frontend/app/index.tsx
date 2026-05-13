@@ -120,7 +120,7 @@ export default function HomeScreen() {
       // Using .m4a because Voice Memos export AAC in an MPEG-4 container.
       const tempUri = `${FileSystem.cacheDirectory}verse_audio.m4a`;
       await FileSystem.writeAsStringAsync(tempUri, verse.audio_base64, {
-        encoding: FileSystem.EncodingType.Base64,
+        encoding: 'base64' as any,
       });
 
       const { sound: newSound } = await Audio.Sound.createAsync(
