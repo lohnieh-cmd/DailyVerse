@@ -54,6 +54,7 @@ export default function SettingsScreen() {
   const [recordedAudio, setRecordedAudio] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importingAudio, setImportingAudio] = useState(false);
   const [seeding, setSeeding] = useState(false);
 
   const fetchData = async () => {
@@ -172,6 +173,49 @@ export default function SettingsScreen() {
       Alert.alert('Error', 'Failed to import file');
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleImportAudioBulk = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets?.[0]) return;
+
+      setImportingAudio(true);
+      const file = result.assets[0];
+
+      const formData = new FormData();
+      formData.append('file', {
+        uri: file.uri,
+        name: file.name || 'audio.zip',
+        type: 'application/zip',
+      } as any);
+
+      const response = await fetch(`${BACKEND_URL}/api/import/audio-bulk`, {
+        method: 'POST',
+        body: formData,
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        const unmatched = data.unmatched?.length
+          ? `\n\nNo match found for:\n${data.unmatched.slice(0, 5).join('\n')}${data.unmatched.length > 5 ? '\n...' : ''}`
+          : '';
+        Alert.alert('Audio Import Complete', `Attached audio to ${data.matched_count} verses.${unmatched}`);
+        fetchData();
+      } else {
+        Alert.alert('Import Failed', data.detail || 'Unknown error');
+      }
+    } catch (err) {
+      console.error('Audio bulk import error:', err);
+      Alert.alert('Error', 'Failed to import audio ZIP');
+    } finally {
+      setImportingAudio(false);
     }
   };
 
@@ -458,6 +502,26 @@ export default function SettingsScreen() {
               </>
             )}
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.importButton, styles.audioZipButton]}
+            onPress={handleImportAudioBulk}
+            disabled={importingAudio}
+          >
+            {importingAudio ? (
+              <ActivityIndicator color="#1A1A2E" />
+            ) : (
+              <>
+                <Ionicons name="musical-notes-outline" size={24} color="#1A1A2E" />
+                <Text style={styles.importButtonText}>Import Audio ZIP</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <Text style={styles.audioZipHint}>
+            Name each recording after the verse reference{"\n"}
+            (e.g. "John 3:16.m4a", "Psalm 23:1-3.m4a"){"\n"}
+            → zip the folder → upload here
+          </Text>
+
           <Text style={styles.importHint}>
             Required columns:{"\n"}
             • Column A: Verse reference (e.g., "Matt 21:22"){"\n"}
@@ -869,6 +933,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#1A1A2E',
+  },
+  audioZipButton: {
+    backgroundColor: '#4A90D9',
+  },
+  audioZipHint: {
+    fontSize: 13,
+    color: '#888',
+    marginBottom: 16,
+    lineHeight: 20,
   },
   seedButton: {
     backgroundColor: 'transparent',
